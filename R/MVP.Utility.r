@@ -118,30 +118,6 @@ print_bar <- function(i,
                 }
             }
         },
-        # "type2"={
-        #     if(inherits(parallel:::mcfork(), "masterProcess")) {
-        #         progress <- 0.0
-        #         while(progress < n && !isIncomplete(tmp.file)){
-        #             msg <- readBin(tmp.file, "double")
-        #             progress <- progress + as.numeric(msg)
-        #             print.len <- round(symbol.len * progress / n)
-        #             if(fixed.points){
-        #                 if(progress %in% round(points * n / 100)){
-        #                     logging.log(paste("\r", 
-        #                               paste(c(symbol.head, rep("-", print.len), symbol.tail), collapse=""), 
-        #                               paste(rep(" ", symbol.len-print.len), collapse=""),
-        #                               sprintf("%.2f%%", progress * 100 / n), sep=""))
-        #                 }
-        #             }else{
-        #                 logging.log(paste("\r", 
-        #                           paste(c(symbol.head, rep("-", print.len), symbol.tail), collapse=""), 
-        #                           paste(rep(" ", symbol.len-print.len), collapse=""),
-        #                           sprintf("%.2f%%", progress * 100 / n), sep=""))
-        #             }
-        #         }
-        #         parallel:::mcexit()
-        #     }
-        # },
         "type3"={
             progress <- readBin(tmp.file, "double") + 1
             writeBin(progress, tmp.file)
@@ -191,14 +167,7 @@ print_accomplished <- function(width = 60, verbose = TRUE) {
 #' @param version short label, bottom-right of logo
 #' @param authors 
 #' @param contact email or website
-#' @param line 1, 2, or char
 #' @param width banner width
-#'
-#' @examples
-#' welcome <- "Welcome to MVP"
-#' title   <- "A Memory-efficient, Visualization-enhanced, and Parallel-accelerated Tool For GWAS"
-#' authors <- "Authors: Lilin Yin, Haohao Zhang, and Xiaolei Liu"
-#' print_info(welcome = welcome, title = title, logo = NULL, authors = authors, contact = NULL, linechar = '=', width = width)
 print_info <- function(welcome=NULL, title=NULL, short_title=NULL, logo=NULL, version=NULL, authors=NULL, contact=NULL, linechar = '=', width=NULL, verbose=TRUE) {
     msg <- c()
     # width
@@ -294,7 +263,7 @@ make_line <- function(string, width, linechar = " ", align = "center", margin = 
 #' 
 #' Build date: Oct 22, 2018
 #' Last update: Dec 12, 2018
-#' by using base::strwarp.
+#' by using base::strwrap.
 #' 
 #' @keywords internal
 #' @author Haohao Zhang
@@ -360,6 +329,12 @@ load_if_installed <- function(package) {
     } else {
         return(FALSE) 
     }
+}
+
+
+.safe_solve <- function(X) {
+    result <- tryCatch(solve(X), error = function(e) MASS::ginv(X))
+    result
 }
 
 

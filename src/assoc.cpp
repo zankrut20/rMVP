@@ -8,7 +8,7 @@ using namespace std;
 using namespace Rcpp;
 using namespace arma;
 
-arma::mat GInv(const arma::mat A){
+arma::mat GInv(const arma::mat& A){
 	
 	arma::mat ginv;
 	if(A.n_rows == 1){
@@ -37,7 +37,7 @@ arma::mat GInv(const arma::mat A){
 }
 
 template <typename T>
-NumericVector getRow(XPtr<BigMatrix> pMat, const int row){
+NumericVector getRow(const XPtr<BigMatrix> pMat, const int row){
 	
 	MatrixAccessor<T> genomat = MatrixAccessor<T>(*pMat);
 
@@ -57,18 +57,7 @@ NumericVector getRow(SEXP pBigMat, const int row){
 
 	XPtr<BigMatrix> xpMat(pBigMat);
 
-	switch(xpMat->matrix_type()){
-	case 1:
-		return getRow<char>(xpMat, row);
-	case 2:
-		return getRow<short>(xpMat, row);
-	case 4:
-		return getRow<int>(xpMat, row);
-	case 8:
-		return getRow<double>(xpMat, row);
-	default:
-		throw Rcpp::exception("unknown type detected for big.matrix object!");
-	}
+	DISPATCH_MATRIX_TYPE(getRow, xpMat, row);
 }
 
 template <typename T>
@@ -102,16 +91,16 @@ SEXP glm_c(const arma::vec &y, const arma::mat &X, const arma::mat & iXX, XPtr<B
 	MinimalProgressBar_plus pb;
 	Progress progress(m, verbose, pb);
 
-	// arma::mat iXX = GInv(X.t() * X);
 	arma::mat xy = X.t() * y;
 	double yy = sum(y % y);
 	arma::mat res(m, 1 + 1 + 1 + q0);
+
 	arma::mat iXXs(q0 + 1, q0 + 1);
 
 	arma::mat Z_buffer(n, step, fill::none);
 	int i = 0, j = 0;
 	int i_marker = 0;
-	for (;i < m;) {
+	while(i < m) {
 		
 		int cnt = 0;
 		for (; j < m && cnt < step; j++)
@@ -119,86 +108,22 @@ SEXP glm_c(const arma::vec &y, const arma::mat &X, const arma::mat & iXX, XPtr<B
 			cnt++;
 		}
 
-		if (cnt != step) {
-			Z_buffer.set_size(n, cnt);
-		}
-
-		if(_geno_ind.is_empty()){
-			if(_marker_ind.is_empty()){
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[(i_marker + l)][k];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[k][(i_marker + l)];
-						}
-					}
-				}
-			}else{
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[_marker_ind[(i_marker + l)]][k];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[k][_marker_ind[(i_marker + l)]];
-						}
-					}
-				}
-			}
-		}else{
-			if(_marker_ind.is_empty()){
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[(i_marker + l)][_geno_ind[k]];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[_geno_ind[k]][(i_marker + l)];
-						}
-					}
-				}
-			}else{
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[_marker_ind[(i_marker + l)]][_geno_ind[k]];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[_geno_ind[k]][_marker_ind[(i_marker + l)]];
-						}
-					}
-				}
-			}
-		}
+		fill_geno_buffer(Z_buffer, genomat, cnt, i_marker, _geno_ind, _marker_ind, marker_bycol, true);
 
 		#pragma omp parallel for firstprivate(iXXs)
 		for(int l = 0; l < cnt; l++){
+			arma::mat xs(q0, 1);
+			arma::mat B21(1, q0);
+			arma::mat NeginvB22B21(1, q0);
+			arma::mat rhs(xy.n_rows + 1, 1);
+			arma::mat beta(q0 + 1, 1);
+			arma::vec se(q0 + 1);
+			arma::vec pvalue(q0 + 1);
+
 			double sy = sum(Z_buffer.col(l) % y);
 			double ss = sum(Z_buffer.col(l) % Z_buffer.col(l));
-			arma::mat xs = X.t() * Z_buffer.col(l);
-			arma::mat B21 = xs.t() * iXX;
+			xs = X.t() * Z_buffer.col(l);
+			B21 = xs.t() * iXX;
 			double t2 = as_scalar(B21 * xs);
 			double B22 = (ss - t2);
 			double invB22;
@@ -210,21 +135,18 @@ SEXP glm_c(const arma::vec &y, const arma::mat &X, const arma::mat & iXX, XPtr<B
 				invB22 = 1 / B22;
 				df = n - q0 - 1;
 			}
-			arma::mat NeginvB22B21 = -1 * invB22 * B21;
+			NeginvB22B21 = -1 * invB22 * B21;
 			iXXs(q0, q0) = invB22;
 			iXXs.submat(0, 0, q0 - 1, q0 - 1) = iXX + invB22 * B21.t() * B21;
 			iXXs(q0, arma::span(0, q0 - 1)) = NeginvB22B21;
 			iXXs(arma::span(0, q0 - 1), q0) = NeginvB22B21.t();
 
 			// statistics
-			arma::mat rhs(xy.n_rows + 1, 1);
 			rhs.rows(0, xy.n_rows - 1) = xy;
 			rhs(xy.n_rows, 0) = sy;
-			arma::mat beta = iXXs * rhs;
+			beta = iXXs * rhs;
 
 			double ve = (yy - as_scalar(beta.t() * rhs)) / df;
-			arma::vec se(q0 + 1);
-			arma::vec pvalue(q0 + 1);
 			for(int ff = 0; ff < (q0 + 1); ff++){
 				se[ff] = sqrt(iXXs(ff, ff) * ve);
 				pvalue[ff] = 2 * R::pt(abs(beta[ff] / se[ff]), df, false, false);
@@ -309,7 +231,7 @@ SEXP mlm_c(const arma::vec & y, const arma::mat & X, const arma::mat & U, const 
 	arma::mat Z_buffer(n, step, fill::none);
 	int i = 0, j = 0;
 	int i_marker = 0;
-	for (;i < m;) {
+	while(i < m) {
 		
 		int cnt = 0;
 		for (; j < m && cnt < step; j++)
@@ -317,79 +239,7 @@ SEXP mlm_c(const arma::vec & y, const arma::mat & X, const arma::mat & U, const 
 			cnt++;
 		}
 
-		if (cnt != step) {
-			Z_buffer.set_size(n, cnt);
-		}
-
-		if(_geno_ind.is_empty()){
-			if(_marker_ind.is_empty()){
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[(i_marker + l)][k];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[k][(i_marker + l)];
-						}
-					}
-				}
-			}else{
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[_marker_ind[(i_marker + l)]][k];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[k][_marker_ind[(i_marker + l)]];
-						}
-					}
-				}
-			}
-		}else{
-			if(_marker_ind.is_empty()){
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[(i_marker + l)][_geno_ind[k]];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[_geno_ind[k]][(i_marker + l)];
-						}
-					}
-				}
-			}else{
-				if(marker_bycol){
-					#pragma omp parallel for
-					for(int l = 0; l < cnt; l++){
-						for(int k = 0; k < n; k++){
-							Z_buffer(k, l) = (double)genomat[_marker_ind[(i_marker + l)]][_geno_ind[k]];
-						}
-					}
-				}else{
-					#pragma omp parallel for
-					for(int k = 0; k < n; k++){
-						for(int l = 0; l < cnt; l++){
-							Z_buffer(k, l) = (double)genomat[_geno_ind[k]][_marker_ind[(i_marker + l)]];
-						}
-					}
-				}
-			}
-		}
+		fill_geno_buffer(Z_buffer, genomat, cnt, i_marker, _geno_ind, _marker_ind, marker_bycol, true);
 
 		#pragma omp parallel for firstprivate(iXXs)
 		for(int l = 0; l < cnt; l++){
@@ -402,7 +252,7 @@ SEXP mlm_c(const arma::vec & y, const arma::mat & X, const arma::mat & U, const 
 			arma::mat B21 = UXUs.t() * iUXUX;
 			arma::mat NeginvB22B21 = -1 * invB22 * B21;
 			
-			iXXs(q0, q0)=invB22;
+			iXXs(q0, q0) = invB22;
 			iXXs.submat(0, 0, q0 - 1, q0 - 1) = iUXUX + invB22 * B21.t() * B21;
 			iXXs(q0, arma::span(0, q0 - 1)) = NeginvB22B21;
 			iXXs(arma::span(0, q0 - 1), q0) = NeginvB22B21.t();

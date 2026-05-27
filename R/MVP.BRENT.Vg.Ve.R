@@ -25,14 +25,19 @@
 #' }
 #' 
 MVP.BRENT.Vg.Ve <- function(y, X, eigenK, verbose = FALSE) {
-    p = 0
+    stopifnot(
+        !anyNA(eigenK$values),
+        length(eigenK$values) == nrow(X),
+        length(y) == nrow(X)
+    )
+    p <- 0
     Sigma <- eigenK$values
-    w <- which(Sigma < 1e-6)
-    Sigma[w] <- 1e-6
+    w <- which(Sigma < .BRENT_MIN_EIGENVALUE)
+    Sigma[w] <- .BRENT_MIN_EIGENVALUE
     U <- eigenK$vectors
-    min_h2 = 0
-    max_h2 = 1
-    tol = .Machine$double.eps^0.25
+    min_h2 <- 0
+    max_h2 <- 1
+    tol <- .Machine$double.eps^0.25
     reml <- fit_diago_brent(y, X, p, Sigma, U, min_h2, max_h2, tol, verbose = verbose)
     vg <- reml[[2]]
     ve <- reml[[1]]
