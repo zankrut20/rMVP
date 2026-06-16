@@ -465,6 +465,10 @@ MVP.Data.Numeric2MVP <- function(num_file, map_file, out='mvp', maxLine=1e4, row
         logging.log("\n", verbose = verbose)
         close(con)
     
+    # Create individual ID file with default names
+    ind_names <- paste0("ind", 1:n)
+    write.table(ind_names, paste0(out, ".geno.ind"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+    
     file.copy(map_file, paste0(out, ".geno.map"))
     
     flush(bigmat)
