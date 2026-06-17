@@ -385,3 +385,199 @@ remove_bigmatrix <- function(x, desc_suffix=".geno.desc", bin_suffix=".geno.bin"
         file.remove(binfile)
     }
 }
+
+
+# ---------------------------------------------------------------------------
+# Phenotype utility functions for logistic regression support
+# Added in Phase 1 of the logistic-regression feature branch.
+# ---------------------------------------------------------------------------
+
+#' Detect phenotype family (binary vs. continuous)
+#'
+#' Inspects the unique non-missing values of a numeric phenotype vector and
+#' returns \code{"binomial"} when exactly two values are found and they belong
+#' to one of the recognised binary codings (\{0,1\}, \{1,2\}, or \{-1,1\}).
+#' Otherwise \code{"gaussian"} is returned.
+#'
+#' Build date: 2026-06-17
+#'
+#' @param y Numeric vector of phenotype values (NAs allowed).
+#' @param verbose Logical. Print detection result when \code{TRUE} (default).
+#'
+#' @return Character scalar: \code{"binomial"} or \code{"gaussian"}.
+#'
+#' @examples
+#' detect_family(c(0, 1, 1, 0, NA))   # "binomial"
+#' detect_family(c(1, 2, 2, 1))        # "binomial"
+#' detect_family(c(-1, 1, -1, 1))      # "binomial"
+#' detect_family(c(1.2, 3.5, 2.8))     # "gaussian"
+#'
+#' @export
+detect_family <- function(y, verbose = TRUE) {
+    uvals <- sort(unique(y[!is.na(y)]))
+    is_binary <- (length(uvals) == 2L) &&
+        (identical(uvals, c(0, 1))  ||
+         identical(uvals, c(1, 2))  ||
+         identical(uvals, c(-1, 1)))
+    family <- if (is_binary) "binomial" else "gaussian"
+    if (verbose) {
+        logging.log(
+            sprintf("Phenotype detected as '%s' (unique values: %s)\n",
+                    family, paste(uvals, collapse = ", "))
+        )
+    }
+    return(family)
+}
+
+
+#' Recode phenotype to standard {0, 1} binary coding
+#'
+#' Converts common binary phenotype codings to the \{0,1\} standard required by
+#' logistic regression:
+#' \itemize{
+#'   \item \{0,1\} — returned unchanged.
+#'   \item \{1,2\} — recoded as \code{y - 1}.
+#'   \item \{-1,1\} — recoded as \code{(y + 1) / 2}.
+#' }
+#' The original coding is stored in the \code{"original_coding"} attribute of
+#' the returned vector.  NAs are preserved in their original positions.
+#'
+#' Build date: 2026-06-17
+#'
+#' @param y Numeric vector of phenotype values.
+#' @param from_coding Optional character string specifying the input coding
+#'   (\code{"01"}, \code{"12"}, or \code{"-11"}).  When \code{NULL} (default)
+#'   the coding is detected automatically.
+#' @param verbose Logical. Print recoding action when \code{TRUE} (default).
+#'
+#' @return Numeric vector coded as \{0,1\} with attribute
+#'   \code{"original_coding"} recording the detected input scheme.
+#'
+#' @examples
+#' recode_phenotype(c(1, 2, 1, 2, NA))   # -> c(0, 1, 0, 1, NA)
+#' recode_phenotype(c(-1, 1, -1, 1))      # -> c(0, 1, 0, 1)
+#' recode_phenotype(c(0, 1, 1, 0))        # unchanged
+#'
+#' @export
+recode_phenotype <- function(y, from_coding = NULL, verbose = TRUE) {
+    uvals <- sort(unique(y[!is.na(y)]))
+
+    # Determine coding scheme
+    if (is.null(from_coding)) {
+        if (identical(uvals, c(0, 1)))  from_coding <- "01"
+        else if (identical(uvals, c(1, 2)))  from_coding <- "12"
+        else if (identical(uvals, c(-1, 1))) from_coding <- "-11"
+        else stop("recode_phenotype: unrecognised binary coding. ",
+                  "Unique values found: ", paste(uvals, collapse = ", "))
+    }
+
+    y_new <- switch(from_coding,
+        "01"  = y,
+        "12"  = y - 1,
+        "-11" = (y + 1) / 2,
+        stop("recode_phenotype: 'from_coding' must be one of '01', '12', '-11'.")
+    )
+
+    attr(y_new, "original_coding") <- from_coding
+
+    if (verbose) {
+        action <- switch(from_coding,
+            "01"  = "No recoding needed ({0,1} already standard)",
+            "12"  = "Recoded {1,2} -> {0,1} (subtracted 1)",
+            "-11" = "Recoded {-1,1} -> {0,1} ((y+1)/2)"
+        )
+        logging.log(action, "\n")
+    }
+
+    return(y_new)
+}
+
+
+#' Validate binary phenotype for logistic regression
+#'
+#' Checks that the phenotype column of an \eqn{n \times 2}{n x 2} matrix
+#' (ID, Y) is suitable for binary analysis:
+#' \enumerate{
+#'   \item No NA values.
+#'   \item Exactly two unique values.
+#'   \item Minimum number of cases and controls.
+#' }
+#' A warning is emitted (but \code{TRUE} is still returned) when the case or
+#' control count falls below the respective minimum.  \code{FALSE} is returned
+#' when a hard requirement fails.
+#'
+#' Build date: 2026-06-17
+#'
+#' @param phe An \eqn{n \times 2}{n x 2} matrix or data frame with columns
+#'   \code{[ID, Y]}.  Column 2 must be numeric.
+#' @param min_cases Integer. Minimum number of cases (Y == 1 after recoding)
+#'   required.  Default \code{10}.
+#' @param min_controls Integer. Minimum number of controls (Y == 0 after
+#'   recoding) required.  Default \code{10}.
+#' @param verbose Logical. Print validation messages when \code{TRUE} (default).
+#'
+#' @return Logical scalar: \code{TRUE} if the phenotype passes all hard
+#'   requirements, \code{FALSE} otherwise.
+#'
+#' @examples
+#' phe <- data.frame(ID = 1:20, Y = c(rep(0, 10), rep(1, 10)))
+#' validate_binary_phenotype(phe)  # TRUE
+#'
+#' @export
+validate_binary_phenotype <- function(phe, min_cases = 10, min_controls = 10,
+                                      verbose = TRUE) {
+    y <- as.numeric(phe[, 2])
+
+    # Hard check 1: no NAs
+    if (anyNA(y)) {
+        logging.log("validate_binary_phenotype: NA values found in phenotype.\n")
+        return(FALSE)
+    }
+
+    uvals <- sort(unique(y))
+
+    # Hard check 2: exactly 2 unique values
+    if (length(uvals) != 2L) {
+        logging.log(
+            sprintf("validate_binary_phenotype: expected 2 unique values, found %d (%s).\n",
+                    length(uvals), paste(uvals, collapse = ", "))
+        )
+        return(FALSE)
+    }
+
+    # Recode to {0,1} for counting
+    y_01 <- tryCatch(
+        recode_phenotype(y, verbose = FALSE),
+        error = function(e) {
+            logging.log("validate_binary_phenotype: unrecognised coding - ", conditionMessage(e), "\n")
+            return(NULL)
+        }
+    )
+    if (is.null(y_01)) return(FALSE)
+
+    n_cases    <- sum(y_01 == 1L, na.rm = TRUE)
+    n_controls <- sum(y_01 == 0L, na.rm = TRUE)
+
+    if (verbose) {
+        logging.log(
+            sprintf("Binary phenotype: %d cases, %d controls.\n",
+                    n_cases, n_controls)
+        )
+    }
+
+    # Soft checks: warn but don't fail
+    if (n_cases < min_cases) {
+        warning(sprintf(
+            "validate_binary_phenotype: only %d cases (minimum recommended: %d).",
+            n_cases, min_cases
+        ))
+    }
+    if (n_controls < min_controls) {
+        warning(sprintf(
+            "validate_binary_phenotype: only %d controls (minimum recommended: %d).",
+            n_controls, min_controls
+        ))
+    }
+
+    return(TRUE)
+}

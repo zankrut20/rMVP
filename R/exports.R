@@ -54,3 +54,13 @@ bigmemory::deepcopy
 #' @importFrom methods new
 #' @export
 methods::new
+
+# Phase 1: phenotype utility exports
+#' @export
+detect_family
+
+#' @export
+recode_phenotype
+
+#' @export
+validate_binary_phenotype
