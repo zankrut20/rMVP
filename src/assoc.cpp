@@ -295,3 +295,235 @@ SEXP mlm_c(const arma::vec & y, const arma::mat & X, const arma::mat & U, const 
 		throw Rcpp::exception("unknown type detected for big.matrix object!");
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Logistic regression C++ backend — Phase 2 (logistic-regression feature)
+//
+// Implements Newton-Raphson IRLS for each marker SNP with optional Firth
+// penalised-likelihood correction for complete/quasi-separation stability.
+// Wald test is used for significance (chi-squared with 1 df).
+//
+// Returns an m x 3 numeric matrix: [Effect, SE, p-value] per marker.
+// Markers that fail to converge are returned as NA.
+// ---------------------------------------------------------------------------
+
+// Compute Firth correction score adjustment:
+//   U_firth[j] = 0.5 * X[,j] * h_ii * (1 - 2*P_i)
+// where h_ii = X[i,] (X'WX)^{-1} X[i,]'  (hat-matrix diagonal).
+// Returns a (q+1)-length correction vector in coefficient space.
+static arma::vec compute_firth_score(const arma::mat &X,
+                                     const arma::vec &P,
+                                     const arma::mat &iXtWX) {
+    int n = X.n_rows;
+    int p = X.n_cols;
+    arma::vec h(n);
+    for (int i = 0; i < n; i++) {
+        arma::rowvec xi = X.row(i);
+        h[i] = arma::as_scalar(xi * iXtWX * xi.t());
+    }
+    // Firth score: X' * diag(0.5*(1-2P)*h)
+    arma::vec adj(p, arma::fill::zeros);
+    for (int j = 0; j < p; j++) {
+        double s = 0.0;
+        for (int i = 0; i < n; i++) {
+            s += X(i, j) * 0.5 * (1.0 - 2.0 * P[i]) * h[i];
+        }
+        adj[j] = s;
+    }
+    return adj;
+}
+
+// Core logistic_c template — called via SEXP dispatcher below.
+template <typename T>
+SEXP logistic_c(const arma::vec &y,
+                const arma::mat &X,
+                XPtr<BigMatrix> pMat,
+                const Nullable<arma::uvec> geno_ind   = R_NilValue,
+                const Nullable<arma::uvec> marker_ind = R_NilValue,
+                const bool   marker_bycol = true,
+                const int    step         = 10000,
+                const bool   verbose      = true,
+                const int    threads      = 0,
+                const bool   firth        = true,
+                const int    max_iter     = 25,
+                const double tol          = 1e-8) {
+
+    omp_setup(threads);
+
+    MatrixAccessor<T> genomat = MatrixAccessor<T>(*pMat);
+
+    // ---- resolve individual index ----------------------------------------
+    int n;
+    arma::uvec _geno_ind;
+    if (geno_ind.isNotNull()) {
+        _geno_ind = as<arma::uvec>(geno_ind) - 1;
+        n = _geno_ind.n_elem;
+    } else {
+        n = marker_bycol ? pMat->nrow() : pMat->ncol();
+    }
+
+    // ---- resolve marker index --------------------------------------------
+    int m;
+    arma::uvec _marker_ind;
+    if (marker_ind.isNotNull()) {
+        _marker_ind = as<arma::uvec>(marker_ind) - 1;
+        m = _marker_ind.n_elem;
+    } else {
+        m = marker_bycol ? pMat->ncol() : pMat->nrow();
+    }
+
+    int q0 = X.n_cols;   // number of null-model covariates (incl. intercept)
+    if (y.n_elem != (arma::uword)n)
+        throw Rcpp::exception("logistic_c: number of individuals does not match!");
+
+    // ---- result storage: m rows x 3 cols (Effect, SE, p-value) ----------
+    arma::mat res(m, 3, arma::fill::value(NA_REAL));
+
+    MinimalProgressBar_plus pb;
+    Progress progress(m, verbose, pb);
+
+    // ---- genotype buffer -------------------------------------------------
+    arma::mat Z_buffer(n, step, arma::fill::none);
+    int i = 0, j = 0;
+    int i_marker = 0;
+
+    while (i < m) {
+        // fill batch
+        int cnt = 0;
+        for (; j < m && cnt < step; j++) { cnt++; }
+        fill_geno_buffer(Z_buffer, genomat, cnt, i_marker, _geno_ind, _marker_ind, marker_bycol, true);
+
+        // ---- per-marker Newton-Raphson -----------------------------------
+        #pragma omp parallel for schedule(dynamic)
+        for (int l = 0; l < cnt; l++) {
+            // Build augmented design matrix [X | z_l]
+            arma::mat Xfull(n, q0 + 1);
+            Xfull.cols(0, q0 - 1) = X;
+            Xfull.col(q0)         = Z_buffer.col(l);
+
+            // Check for monomorphic marker (zero variance) → skip
+            double zvar = arma::var(Z_buffer.col(l));
+            if (zvar < 1e-10) {
+                // Leave as NA
+                continue;
+            }
+
+            // Newton-Raphson IRLS
+            arma::vec beta(q0 + 1, arma::fill::zeros);
+            bool converged = false;
+
+            for (int iter = 0; iter < max_iter; iter++) {
+                arma::vec eta  = Xfull * beta;               // linear predictor
+                arma::vec P    = 1.0 / (1.0 + arma::exp(-eta));  // P(Y=1)
+                arma::vec W    = P % (1.0 - P);              // working weights
+
+                // Clamp weights to avoid numerical zero (near-separation)
+                W = arma::clamp(W, 1e-8, 0.25);
+
+                // X' W X
+                arma::mat XtW  = Xfull.t();
+                XtW.each_row() %= W.t();
+                arma::mat XtWX = XtW * Xfull;
+
+                // Symmetric positive-definite solve (fallback to SVD on fail)
+                arma::mat iXtWX;
+                bool ok = arma::inv_sympd(iXtWX, XtWX);
+                if (!ok) {
+                    // SVD-based pseudo-inverse
+                    arma::mat U2; arma::vec s; arma::mat V2;
+                    arma::svd(U2, s, V2, XtWX);
+                    double thr = arma::max(s) * 1e-10;
+                    arma::vec si = 1.0 / arma::clamp(s, thr, arma::datum::inf);
+                    iXtWX = V2 * arma::diagmat(si) * U2.t();
+                }
+
+                // Score: X'(Y - P) [+ Firth adjustment if enabled]
+                arma::vec score = Xfull.t() * (y - P);
+                if (firth) {
+                    score += compute_firth_score(Xfull, P, iXtWX);
+                }
+
+                // Newton step: Δβ = (X'WX)^{-1} score
+                arma::vec delta_beta = iXtWX * score;
+                beta += delta_beta;
+
+                if (arma::norm(delta_beta, "inf") < tol) {
+                    converged = true;
+                    break;
+                }
+            }
+
+            if (!converged) {
+                // Leave row as NA — marker failed convergence
+                continue;
+            }
+
+            // ---- Final statistics ----------------------------------------
+            arma::vec eta_f = Xfull * beta;
+            arma::vec P_f   = 1.0 / (1.0 + arma::exp(-eta_f));
+            arma::vec W_f   = arma::clamp(P_f % (1.0 - P_f), 1e-8, 0.25);
+
+            arma::mat XtW_f  = Xfull.t();
+            XtW_f.each_row() %= W_f.t();
+            arma::mat XtWX_f = XtW_f * Xfull;
+
+            arma::mat iXtWX_f;
+            bool ok2 = arma::inv_sympd(iXtWX_f, XtWX_f);
+            if (!ok2) {
+                arma::mat U2; arma::vec s; arma::mat V2;
+                arma::svd(U2, s, V2, XtWX_f);
+                double thr = arma::max(s) * 1e-10;
+                arma::vec si = 1.0 / arma::clamp(s, thr, arma::datum::inf);
+                iXtWX_f = V2 * arma::diagmat(si) * U2.t();
+            }
+
+            double effect = beta[q0];
+            double se     = std::sqrt(std::abs(iXtWX_f(q0, q0)));
+            double z_stat = effect / se;
+            // Wald chi-squared test: p = 2*Phi(-|z|)
+            double pval   = 2.0 * R::pnorm(-std::abs(z_stat), 0.0, 1.0, 1, 0);
+
+            res(i_marker + l, 0) = effect;
+            res(i_marker + l, 1) = se;
+            res(i_marker + l, 2) = pval;
+        }
+
+        i        = j;
+        i_marker += cnt;
+        if (!Progress::check_abort()) progress.increment(cnt);
+    }
+
+    Z_buffer.reset();
+    return Rcpp::wrap(res);
+}
+
+// [[Rcpp::export]]
+SEXP logistic_c(const arma::vec &y,
+                const arma::mat &X,
+                SEXP pBigMat,
+                const Nullable<arma::uvec> geno_ind   = R_NilValue,
+                const Nullable<arma::uvec> marker_ind = R_NilValue,
+                const bool   marker_bycol = true,
+                const int    step         = 10000,
+                const bool   verbose      = true,
+                const int    threads      = 0,
+                const bool   firth        = true,
+                const int    max_iter     = 25,
+                const double tol          = 1e-8) {
+
+    XPtr<BigMatrix> xpMat(pBigMat);
+
+    switch (xpMat->matrix_type()) {
+    case 1:
+        return logistic_c<char>  (y, X, xpMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads, firth, max_iter, tol);
+    case 2:
+        return logistic_c<short> (y, X, xpMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads, firth, max_iter, tol);
+    case 4:
+        return logistic_c<int>   (y, X, xpMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads, firth, max_iter, tol);
+    case 8:
+        return logistic_c<double>(y, X, xpMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads, firth, max_iter, tol);
+    default:
+        throw Rcpp::exception("unknown type detected for big.matrix object!");
+    }
+}
+

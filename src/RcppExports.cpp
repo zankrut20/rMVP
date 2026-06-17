@@ -65,6 +65,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// logistic_c
+SEXP logistic_c(const arma::vec& y, const arma::mat& X, SEXP pBigMat, const Nullable<arma::uvec> geno_ind, const Nullable<arma::uvec> marker_ind, const bool marker_bycol, const int step, const bool verbose, const int threads, const bool firth, const int max_iter, const double tol);
+RcppExport SEXP _rMVP_logistic_c(SEXP ySEXP, SEXP XSEXP, SEXP pBigMatSEXP, SEXP geno_indSEXP, SEXP marker_indSEXP, SEXP marker_bycolSEXP, SEXP stepSEXP, SEXP verboseSEXP, SEXP threadsSEXP, SEXP firthSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type pBigMat(pBigMatSEXP);
+    Rcpp::traits::input_parameter< const Nullable<arma::uvec> >::type geno_ind(geno_indSEXP);
+    Rcpp::traits::input_parameter< const Nullable<arma::uvec> >::type marker_ind(marker_indSEXP);
+    Rcpp::traits::input_parameter< const bool >::type marker_bycol(marker_bycolSEXP);
+    Rcpp::traits::input_parameter< const int >::type step(stepSEXP);
+    Rcpp::traits::input_parameter< const bool >::type verbose(verboseSEXP);
+    Rcpp::traits::input_parameter< const int >::type threads(threadsSEXP);
+    Rcpp::traits::input_parameter< const bool >::type firth(firthSEXP);
+    Rcpp::traits::input_parameter< const int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< const double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(logistic_c(y, X, pBigMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads, firth, max_iter, tol));
+    return rcpp_result_gen;
+END_RCPP
+}
 // vcf_parser_map
 List vcf_parser_map(std::string vcf_file, std::string out);
 RcppExport SEXP _rMVP_vcf_parser_map(SEXP vcf_fileSEXP, SEXP outSEXP) {
@@ -266,6 +288,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_rMVP_getRow", (DL_FUNC) &_rMVP_getRow, 2},
     {"_rMVP_glm_c", (DL_FUNC) &_rMVP_glm_c, 10},
     {"_rMVP_mlm_c", (DL_FUNC) &_rMVP_mlm_c, 11},
+    {"_rMVP_logistic_c", (DL_FUNC) &_rMVP_logistic_c, 12},
     {"_rMVP_vcf_parser_map", (DL_FUNC) &_rMVP_vcf_parser_map, 2},
     {"_rMVP_vcf_parser_genotype", (DL_FUNC) &_rMVP_vcf_parser_genotype, 5},
     {"_rMVP_hapmap_parser_map", (DL_FUNC) &_rMVP_hapmap_parser_map, 2},

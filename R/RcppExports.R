@@ -13,6 +13,10 @@ mlm_c <- function(y, X, U, vgs, pBigMat, geno_ind = NULL, marker_ind = NULL, mar
     .Call(`_rMVP_mlm_c`, y, X, U, vgs, pBigMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads)
 }
 
+logistic_c <- function(y, X, pBigMat, geno_ind = NULL, marker_ind = NULL, marker_bycol = TRUE, step = 10000L, verbose = TRUE, threads = 0L, firth = TRUE, max_iter = 25L, tol = 1e-8) {
+    .Call(`_rMVP_logistic_c`, y, X, pBigMat, geno_ind, marker_ind, marker_bycol, step, verbose, threads, firth, max_iter, tol)
+}
+
 vcf_parser_map <- function(vcf_file, out) {
     .Call(`_rMVP_vcf_parser_map`, vcf_file, out)
 }
