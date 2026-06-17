@@ -52,6 +52,10 @@
 #' @param dpi resolution for output figures
 #' @param threshold a cutoff line on manhattan plot, 0.05/marker size
 #' @param verbose whether to print detail.
+#' @param family Character. Phenotype family for GLM analysis: \code{"auto"}
+#'   (default) detects binary vs. continuous automatically; \code{"binomial"}
+#'   forces logistic regression; \code{"gaussian"} forces linear regression.
+#'   Only applies when \code{"GLM"} is in \code{method}.
 #' 
 #' @export
 #' @return
@@ -89,7 +93,8 @@ function(phe, geno, map, K=NULL, nPC.GLM=NULL, nPC.MLM=NULL, nPC.FarmCPU=NULL,
          permutation.rep=100, memo=NULL, outpath=getwd(),
          col=c("#4197d8", "#f8c120", "#413496", "#495226", "#d60b6f", "#e66519", 
          "#d581b7", "#83d3ad", "#7c162c", "#26755d"), file.output=TRUE, 
-         file.type="jpg", dpi=300, threshold=0.05, verbose=TRUE
+         file.type="jpg", dpi=300, threshold=0.05, verbose=TRUE,
+         family="auto"
 ) {
 
     # Compatible with old ways
@@ -241,6 +246,19 @@ function(phe, geno, map, K=NULL, nPC.GLM=NULL, nPC.MLM=NULL, nPC.FarmCPU=NULL,
     glm.run <- "GLM" %in% method
     mlm.run <- "MLM" %in% method
     farmcpu.run <- "FarmCPU" %in% method
+
+    # Auto-detect phenotype family for GLM dispatch
+    if (glm.run) {
+        if (identical(family, "auto")) {
+            family <- detect_family(as.numeric(phe[, 2]), verbose = verbose)
+        } else if (!family %in% c("binomial", "gaussian")) {
+            stop("MVP: 'family' must be one of 'auto', 'binomial', or 'gaussian'.")
+        }
+        if (identical(family, "binomial")) {
+            logging.log("Binary phenotype detected - GLM will use logistic regression.\n",
+                        verbose = verbose)
+        }
+    }
     
     nPC <- suppressWarnings(max(nPC.GLM, nPC.MLM, nPC.FarmCPU, na.rm = TRUE))
     if (nPC <= 0) {
@@ -337,15 +355,41 @@ function(phe, geno, map, K=NULL, nPC.GLM=NULL, nPC.MLM=NULL, nPC.FarmCPU=NULL,
     #GWAS
     logging.log("-------------------------GWAS Start-------------------------", "\n", verbose = verbose)
     if (glm.run) {
-        logging.log("General Linear Model (GLM) Start...", "\n", verbose = verbose)
-        glm.results <- MVP.GLM(phe=phe, geno=geno, CV=CV.GLM, ind_idx=seqTaxa, mrk_idx=geno_marker_index, mrk_bycol = MrkByCol, maxLine = maxLine, cpu=ncpus, verbose = verbose)
-        colnames(glm.results) <- c("Effect", "SE", paste(colnames(phe)[2],"GLM",sep="."))
-        z = glm.results[, 1]/glm.results[, 2]
-        lambda = median(z^2, na.rm=TRUE)/qchisq(1/2, df = 1,lower.tail=FALSE)
+        if (identical(family, "binomial")) {
+            logging.log("General Linear Model (Logistic Regression) Start...\n", verbose = verbose)
+            glm.results <- MVP.Logistic(
+                phe        = phe,
+                geno       = geno,
+                CV         = CV.GLM,
+                ind_idx    = seqTaxa,
+                mrk_idx    = geno_marker_index,
+                mrk_bycol  = MrkByCol,
+                maxLine    = maxLine,
+                cpu        = ncpus,
+                family     = "binomial",
+                verbose    = verbose
+            )
+        } else {
+            logging.log("General Linear Model (GLM) Start...\n", verbose = verbose)
+            glm.results <- MVP.GLM(
+                phe        = phe,
+                geno       = geno,
+                CV         = CV.GLM,
+                ind_idx    = seqTaxa,
+                mrk_idx    = geno_marker_index,
+                mrk_bycol  = MrkByCol,
+                maxLine    = maxLine,
+                cpu        = ncpus,
+                verbose    = verbose
+            )
+        }
+        colnames(glm.results) <- c("Effect", "SE", paste(colnames(phe)[2], "GLM", sep="."))
+        z = glm.results[, 1] / glm.results[, 2]
+        lambda = median(z^2, na.rm=TRUE) / qchisq(1/2, df = 1, lower.tail=FALSE)
         logging.log("Genomic inflation factor (lambda):", round(lambda, 4), "\n", verbose = verbose)
         if ("pmap" %in% file.output) {
             logging.log("Writing results to local file", "\n", verbose = verbose)
-            write.csv(x = cbind(map_sub, glm.results), 
+            write.csv(x = cbind(map_sub, glm.results),
                     file = file.path(outpath, paste(colnames(phe)[2], ".GLM.", memo, ifelse(is.null(memo),"csv",".csv"), sep = "")),
                     row.names = FALSE)
         }
