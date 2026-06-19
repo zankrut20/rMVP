@@ -86,5 +86,5 @@ test_that("MVP.Data() - HMP", {
 
 files <- dir(pattern = "^rMVP.test")
 file.remove(files)
-files <- dir(pattern = "*.log")
+files <- dir(pattern = "\\.log$")
 file.remove(files)
