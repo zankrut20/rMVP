@@ -379,6 +379,46 @@ SEXP logistic_c(const arma::vec &y,
     // ---- result storage: m rows x 3 cols (Effect, SE, p-value) ----------
     arma::mat res(m, 3, arma::fill::value(NA_REAL));
 
+    // ---- Pre-fit Null Model (Covariates only) ----------------------------
+    arma::vec beta_null(q0, arma::fill::zeros);
+    bool null_converged = false;
+    for (int iter = 0; iter < max_iter; iter++) {
+        arma::vec eta = X * beta_null;
+        arma::vec P = 1.0 / (1.0 + arma::exp(-eta));
+        arma::vec W = arma::clamp(P % (1.0 - P), 1e-8, 0.25);
+        
+        arma::mat XtW = X.t();
+        XtW.each_row() %= W.t();
+        arma::mat XtWX = XtW * X;
+        
+        arma::mat iXtWX;
+        if (!arma::inv_sympd(iXtWX, XtWX)) {
+            arma::mat U2; arma::vec s; arma::mat V2;
+            arma::svd(U2, s, V2, XtWX);
+            double thr = arma::max(s) * 1e-10;
+            arma::vec si = 1.0 / arma::clamp(s, thr, arma::datum::inf);
+            iXtWX = V2 * arma::diagmat(si) * U2.t();
+        }
+        
+        arma::vec score = X.t() * (y - P);
+        if (firth) {
+            score += compute_firth_score(X, P, iXtWX);
+        }
+        
+        arma::vec delta_beta = iXtWX * score;
+        beta_null += delta_beta;
+        
+        if (arma::norm(delta_beta, "inf") < tol) {
+            null_converged = true;
+            break;
+        }
+    }
+    if (!null_converged) {
+        Rcpp::warning("rMVP Logistic: Null model failed to converge. Marker tests may be suboptimal.");
+    }
+    
+    int non_converged_count = 0;
+
     MinimalProgressBar_plus pb;
     Progress progress(m, verbose, pb);
 
@@ -408,8 +448,9 @@ SEXP logistic_c(const arma::vec &y,
                 continue;
             }
 
-            // Newton-Raphson IRLS
+            // Newton-Raphson IRLS (Warm start from null model)
             arma::vec beta(q0 + 1, arma::fill::zeros);
+            beta.head(q0) = beta_null;
             bool converged = false;
 
             for (int iter = 0; iter < max_iter; iter++) {
@@ -455,6 +496,8 @@ SEXP logistic_c(const arma::vec &y,
 
             if (!converged) {
                 // Leave row as NA — marker failed convergence
+                #pragma omp atomic
+                non_converged_count++;
                 continue;
             }
 
@@ -494,6 +537,11 @@ SEXP logistic_c(const arma::vec &y,
     }
 
     Z_buffer.reset();
+    
+    if (non_converged_count > 0) {
+        Rcpp::warning("rMVP Logistic: %d markers failed to converge and were assigned NA.", non_converged_count);
+    }
+    
     return Rcpp::wrap(res);
 }
 
