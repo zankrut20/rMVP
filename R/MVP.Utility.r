@@ -165,7 +165,7 @@ print_accomplished <- function(width = 60, verbose = TRUE) {
 #' @param short_title short label, top-left of logo
 #' @param logo logo
 #' @param version short label, bottom-right of logo
-#' @param authors 
+#' @param authors list of author names to display
 #' @param contact email or website
 #' @param width banner width
 print_info <- function(welcome=NULL, title=NULL, short_title=NULL, logo=NULL, version=NULL, authors=NULL, contact=NULL, linechar = '=', width=NULL, verbose=TRUE) {
@@ -430,14 +430,14 @@ detect_family <- function(y, verbose = TRUE) {
 }
 
 
-#' Recode phenotype to standard {0, 1} binary coding
+#' Recode phenotype to standard \{0, 1\} binary coding
 #'
 #' Converts common binary phenotype codings to the \{0,1\} standard required by
 #' logistic regression:
 #' \itemize{
-#'   \item \{0,1\} — returned unchanged.
-#'   \item \{1,2\} — recoded as \code{y - 1}.
-#'   \item \{-1,1\} — recoded as \code{(y + 1) / 2}.
+#'   \item \{0,1\} - returned unchanged.
+#'   \item \{1,2\} - recoded as \code{y - 1}.
+#'   \item \{-1,1\} - recoded as \code{(y + 1) / 2}.
 #' }
 #' The original coding is stored in the \code{"original_coding"} attribute of
 #' the returned vector.  NAs are preserved in their original positions.

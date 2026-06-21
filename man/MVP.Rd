@@ -37,7 +37,8 @@ MVP(
   file.type = "jpg",
   dpi = 300,
   threshold = 0.05,
-  verbose = TRUE
+  verbose = TRUE,
+  family = "auto"
 )
 }
 \arguments{
@@ -104,6 +105,11 @@ MVP(
 \item{threshold}{a cutoff line on manhattan plot, 0.05/marker size}
 
 \item{verbose}{whether to print detail.}
+
+\item{family}{Character. Phenotype family for GLM analysis: \code{"auto"}
+(default) detects binary vs. continuous automatically; \code{"binomial"}
+forces logistic regression; \code{"gaussian"} forces linear regression.
+Only applies when \code{"GLM"} is in \code{method}.}
 }
 \value{
 Output: MVP.return$map - SNP map information, SNP name, Chr, Pos, A1, A2, MAF

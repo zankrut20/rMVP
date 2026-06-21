@@ -28,7 +28,7 @@ print_info(
 
 \item{version}{short label, bottom-right of logo}
 
-\item{authors}{}
+\item{authors}{list of author names to display}
 
 \item{contact}{email or website}
 
