@@ -39,7 +39,7 @@ test_that("detect_family handles NAs correctly — ignores them in detection", {
 test_that("detect_family logs detection result when verbose = TRUE", {
     msg <- capture.output(
         result <- detect_family(c(0, 1), verbose = TRUE),
-        type = "message"
+        type = "output"
     )
     expect_equal(result, "binomial")
     # Verbose path shouldn't error even if logging goes to stderr

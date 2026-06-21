@@ -11,7 +11,7 @@
 #   6  - Output format / attributes
 #
 # Run with: devtools::test(filter = "regression_logistic")
-
+options(bigmemory.typecast.warning = FALSE)
 
 # ---------------------------------------------------------------------------
 # Shared test helpers

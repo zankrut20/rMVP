@@ -530,7 +530,7 @@ validate_binary_phenotype <- function(phe, min_cases = 10, min_controls = 10,
 
     # Hard check 1: no NAs
     if (anyNA(y)) {
-        logging.log("validate_binary_phenotype: NA values found in phenotype.\n")
+        logging.log("validate_binary_phenotype: NA values found in phenotype.\n", verbose = verbose)
         return(FALSE)
     }
 
@@ -540,7 +540,8 @@ validate_binary_phenotype <- function(phe, min_cases = 10, min_controls = 10,
     if (length(uvals) != 2L) {
         logging.log(
             sprintf("validate_binary_phenotype: expected 2 unique values, found %d (%s).\n",
-                    length(uvals), paste(uvals, collapse = ", "))
+                    length(uvals), paste(uvals, collapse = ", ")),
+            verbose = verbose
         )
         return(FALSE)
     }
